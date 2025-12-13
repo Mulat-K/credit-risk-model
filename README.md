@@ -288,3 +288,12 @@ GitHub Actions workflow with the following steps:
 **Analytics Engineer – Bati Bank**
 
 This project demonstrates the full lifecycle of a production-grade credit risk model using alternative data, aligned with regulatory requirements and modern engineering best practices.
+
+------------------------------------------------------------------------
+
+## ⚙️ Installation & Setup
+
+``` bash
+git clone https://github.com/Mulat-K/insurance_analytics.git
+cd insurance_analytics
+```
