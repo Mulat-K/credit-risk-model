@@ -1,7 +1,79 @@
 __pycache__/
 *.pyc
-.env
-venv/
-.venv/
+
+
+
+# ==============================
+# Data files (DO NOT TRACK)
+# ==============================
+data/
+data/**
 data/raw/
 data/processed/
+
+# ==============================
+# Python cache & compiled files
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ==============================
+# Virtual environments
+# ==============================
+venv/
+.venv/
+env/
+.env
+.venv/
+
+# ==============================
+# Environment variables
+# ==============================
+.env
+.env.*
+
+# ==============================
+# Jupyter Notebook artifacts
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# MLflow artifacts
+# ==============================
+mlruns/
+artifacts/
+
+# ==============================
+# Model artifacts
+# ==============================
+models/
+*.pkl
+*.joblib
+
+# ==============================
+# Logs & temporary files
+# ==============================
+*.log
+*.tmp
+*.bak
+
+# ==============================
+# OS / IDE specific
+# ==============================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ==============================
+# Docker
+# ==============================
+*.pid
+
+# ==============================
+# Testing & coverage
+# ==============================
+.pytest_cache/
+.coverage
+htmlcov/
