@@ -57,3 +57,34 @@ def create_rfm_clusters(df_raw, customer_df):
     # 3. KMeans Clustering
     kmeans = KMeans(n_clusters=3, random_state=42)
     rfm['Cluster'] = kmeans.fit_predict(rfm_scaled)
+
+    
+    # 4. Define High Risk
+    # Analyze clusters: Usually High Recency + Low Frequency/Monetary = High Risk (Churned/Low Value)
+    # For this example, let's assume Cluster 0 is the "worst" performing one.
+    # In a real scenario, you print rfm.groupby('Cluster').mean() to decide.
+    cluster_means = rfm.groupby('Cluster').mean()
+    high_risk_cluster = cluster_means['Recency'].idxmax() # Assuming high recency = bad
+    
+    rfm['is_high_risk'] = (rfm['Cluster'] == high_risk_cluster).astype(int)
+    
+    # Merge target back to customer features
+    final_df = customer_df.merge(rfm[['is_high_risk']], on='CustomerId', how='left')
+    
+    return final_df
+
+def process_pipeline(input_path, output_path):
+    df = load_data(input_path)
+    
+    # Task 3: Aggregates
+    cust_df = create_aggregate_features(df)
+    
+    # Task 4: Target Engineering
+    final_df = create_rfm_clusters(df, cust_df)
+    
+    # Save
+    final_df.to_csv(output_path, index=False)
+    print(f"Processed data saved to {output_path}")
+
+if __name__ == "__main__":
+    process_pipeline('data/raw/data.csv', 'data/processed/train_data.csv')
