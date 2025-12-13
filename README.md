@@ -294,6 +294,6 @@ This project demonstrates the full lifecycle of a production-grade credit risk m
 ## ⚙️ Installation & Setup
 
 ``` bash
-git clone https://github.com/Mulat-K/insurance_analytics.git
-cd insurance_analytics
+git clone https://github.com/Mulat-K/credit-risk-model.git
+cd credit-risk-model
 ```
