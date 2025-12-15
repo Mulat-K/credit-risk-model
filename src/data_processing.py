@@ -1,97 +1,97 @@
 import pandas as pd
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.impute import SimpleImputer
-import category_encoders as ce  # Requires: pip install category_encoders
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
 
-# --- Custom Transformers ---
-
-class TimeFeatureExtractor(BaseEstimator, TransformerMixin):
-    """Extracts temporal features from TransactionStartTime."""
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        X_copy = X.copy()
-        # Ensure datetime
-        if not np.issubdtype(X_copy['TransactionStartTime'].dtype, np.datetime64):
-            X_copy['TransactionStartTime'] = pd.to_datetime(X_copy['TransactionStartTime'])
-            
-        X_copy['Tx_Hour'] = X_copy['TransactionStartTime'].dt.hour
-        X_copy['Tx_Day'] = X_copy['TransactionStartTime'].dt.day
-        X_copy['Tx_Month'] = X_copy['TransactionStartTime'].dt.month
-        return X_copy[['Tx_Hour', 'Tx_Day', 'Tx_Month']]
-
-class OutlierCapper(BaseEstimator, TransformerMixin):
-    """Caps numerical features at the 99th percentile (Winsorization)."""
-    def __init__(self, factor=1.5):
-        self.factor = factor
-        self.caps_ = {}
-
-    def fit(self, X, y=None):
-        # Calculate caps based on IQR or Percentiles
-        for col in X.columns:
-            if pd.api.types.is_numeric_dtype(X[col]):
-                upper_cap = X[col].quantile(0.99)
-                self.caps_[col] = upper_cap
-        return self
-
-    def transform(self, X):
-        X_copy = X.copy()
-        for col, cap in self.caps_.items():
-            if col in X_copy.columns:
-                X_copy[col] = X_copy[col].clip(upper=cap)
-        return X_copy
-
-# --- Pipeline Construction ---
-
-def get_training_pipeline(categorical_cols, numerical_cols):
+def calculate_rfm(df):
     """
-    Constructs the full ML pipeline.
-    
-    Args:
-        categorical_cols: List of columns for WoE/OneHot encoding.
-        numerical_cols: List of columns for Scaling/Imputation.
+    Step 1: Calculate Recency, Frequency, and Monetary (RFM) metrics.
     """
+    print("Calculating RFM metrics...")
     
-    # 1. Numerical Pipeline: Impute -> Cap Outliers -> Scale
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='median')),
-        ('outlier_capper', OutlierCapper()),
-        ('scaler', StandardScaler())
-    ])
-
-    # 2. Categorical Pipeline: Weight of Evidence (WoE)
-    # WoE is supervised; it needs 'y' in fit(). It helps monotonic relationship with risk.
-    categorical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='most_frequent')),
-        ('woe', ce.WOEEncoder(regularization=1.0)) 
-    ])
-
-    # 3. Combine
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numeric_transformer, numerical_cols),
-            ('cat', categorical_transformer, categorical_cols)
-        ]
-    )
+    # Ensure datetime
+    df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
     
-    return preprocessor
+    # Define snapshot date (usually the day after the last transaction in the dataset)
+    snapshot_date = df['TransactionStartTime'].max() + pd.Timedelta(days=1)
+    
+    # Aggregate
+    rfm = df.groupby('CustomerId').agg({
+        'TransactionStartTime': lambda x: (snapshot_date - x.max()).days, # Recency
+        'TransactionId': 'count',                                         # Frequency
+        'Amount': 'sum'                                                   # Monetary
+    }).rename(columns={
+        'TransactionStartTime': 'Recency',
+        'TransactionId': 'Frequency',
+        'Amount': 'Monetary'
+    })
+    
+    return rfm
 
-# --- Unit Tests for Processing (Add to tests/test_data_processing.py) ---
-def test_time_extractor():
-    df = pd.DataFrame({'TransactionStartTime': ['2023-01-01 10:00:00']})
-    transformer = TimeFeatureExtractor()
-    res = transformer.fit_transform(df)
-    assert res['Tx_Hour'][0] == 10
-    assert 'Tx_Month' in res.columns
+def create_risk_label(rfm_df):
+    """
+    Step 2 & 3: Run K-Means and Label High-Risk Customers.
+    High Risk is defined as the cluster with the highest Recency (inactive) 
+    and lowest Frequency/Monetary (low engagement).
+    """
+    print("Running KMeans clustering for risk labeling...")
+    
+    # 1. Scaling (Crucial for KMeans)
+    scaler = StandardScaler()
+    rfm_scaled = scaler.fit_transform(rfm_df[['Recency', 'Frequency', 'Monetary']])
+    
+    # 2. KMeans with k=3
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    rfm_df['Cluster'] = kmeans.fit_predict(rfm_scaled)
+    
+    # 3. Identify High-Risk Cluster Programmatically
+    # We calculate the mean Recency for each cluster. 
+    # The cluster with the HIGHEST Recency and LOWEST Frequency is usually 'High Risk' (Churned/Bad).
+    cluster_summary = rfm_df.groupby('Cluster').agg({
+        'Recency': 'mean',
+        'Frequency': 'mean',
+        'Monetary': 'mean'
+    })
+    
+    print("Cluster Summary:\n", cluster_summary)
+    
+    # Logic: High Risk = Max Recency
+    high_risk_cluster_id = cluster_summary['Recency'].idxmax()
+    print(f"Cluster {high_risk_cluster_id} identified as High Risk.")
+    
+    # 4. Assign Target Variable (1 = High Risk, 0 = Low Risk)
+    rfm_df['is_high_risk'] = (rfm_df['Cluster'] == high_risk_cluster_id).astype(int)
+    
+    return rfm_df[['is_high_risk']] # Return only the target/index
 
-def test_outlier_capper():
-    df = pd.DataFrame({'Amount': [10, 20, 10000]}) # 10000 is outlier
-    capper = OutlierCapper()
-    res = capper.fit_transform(df)
-    # The 10000 should be capped at 99th percentile (approx ~9800 depending on quantile logic)
-    assert res['Amount'].max() < 10000
+def process_data(input_path, output_path):
+    """
+    Main pipeline to load, process, create target, and save.
+    """
+    # Load
+    df = pd.read_csv(input_path)
+    
+    # 1. Feature Engineering (Basic Aggregations from previous steps)
+    # (Simplified for brevity, ensure your create_aggregate_features logic is here)
+    cust_features = df.groupby('CustomerId').agg({
+        'Amount': ['mean', 'sum', 'std'],
+        'FraudResult': 'max'
+    })
+    cust_features.columns = ['_'.join(col).strip() for col in cust_features.columns.values]
+    cust_features.reset_index(inplace=True)
+    cust_features.fillna(0, inplace=True)
+
+    # 2. PROXY TARGET ENGINEERING (The core requirement)
+    rfm_df = calculate_rfm(df)
+    risk_labels = create_risk_label(rfm_df)
+    
+    # 3. Merge Labels back to Features
+    final_df = cust_features.merge(risk_labels, on='CustomerId', how='left')
+    
+    # Drop CustomerId before training usually, or keep it to split later
+    final_df.to_csv(output_path, index=False)
+    print(f"Data processed and saved to {output_path}. Shape: {final_df.shape}")
+
+if __name__ == "__main__":
+    # Create dummy data if file doesn't exist for testing
+    process_data('data/raw/data.csv', 'data/processed/train_data.csv')
