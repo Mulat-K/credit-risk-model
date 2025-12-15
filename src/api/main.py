@@ -1,39 +1,65 @@
-from fastapi import FastAPI, HTTPException
-import mlflow.sklearn
+import os
 import pandas as pd
-from .pydantic_models import CustomerData, PredictionResponse
+import mlflow.pyfunc
+from fastapi import FastAPI, HTTPException, Request
+from contextlib import asynccontextmanager
+from src.api.pydantic_models import CustomerData, PredictionResponse
 
-app = FastAPI(title="Bati Bank Credit Risk API")
+# Global variables
+model = None
 
-# Load model (In production, load from Model Registry or artifact path)
-# Assuming Random Forest was best and saved locally for this example
-# MODEL_URI = "models:/Credit_Risk_Model_Bati/Production" 
-# model = mlflow.sklearn.load_model(MODEL_URI)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Load the model on startup.
+    In production, this URI points to the Model Registry (e.g., 'models:/CreditRiskModel/Production')
+    For this implementation, we look for the latest local run or a fixed path.
+    """
+    global model
+    try:
+        # Example: Load from a specific run ID or local path
+        # In a real CI/CD pipeline, the train step outputs the RUN_ID to an env var
+        # model_uri = f"runs:/{os.getenv('MLFLOW_RUN_ID')}/model"
+        
+        # Fallback for local testing: Load from the 'mlruns' folder manually or assume a 'production_model' folder
+        # For demonstration, we assume the user trained and saved to a local path or knows the URI
+        model_uri = "./mlruns/0/latest_run_id/artifacts/model" # Update this logic dynamically
+        
+        # Simpler approach for assignment: Expect an environment variable or default to error
+        if os.getenv("MODEL_URI"):
+            model = mlflow.pyfunc.load_model(os.getenv("MODEL_URI"))
+            print("Model loaded successfully.")
+        else:
+            print("Warning: MODEL_URI not set. API will fail on predict.")
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+    
+    yield
+    # Clean up resources if needed
 
-# Mock model loading for the script to run without a live MLflow server
-try:
-    # This path depends on where you run it from or a specific path
-    # For now, we simulate a loading
-    model = None 
-    print("Model loading logic goes here")
-except Exception as e:
-    print(f"Error loading model: {e}")
+app = FastAPI(title="Credit Risk API", lifespan=lifespan)
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict_risk(data: CustomerData):
-    # Convert input to DataFrame
-    input_data = pd.DataFrame([data.dict()])
+def predict(data: CustomerData):
+    global model
+    if not model:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     
-    # Make Prediction
-    # probability = model.predict_proba(input_data)[:, 1][0]
-    probability = 0.25 # Mock result
-    
-    # Define Threshold
-    threshold = 0.5
-    approved = probability < threshold
-    
-    return {
-        "customer_id": "req_123", # Usually passed in
-        "risk_probability": probability,
-        "approved": approved
-    }
+    try:
+        # Convert Pydantic object to DataFrame
+        input_df = pd.DataFrame([data.dict()])
+        
+        # The pipeline (WoE/Scaling) is inside the loaded model, 
+        # so we pass raw features directly.
+        probability = model.predict_proba(input_df)[:, 1][0]
+        
+        # Business Logic
+        threshold = 0.5
+        return {
+            "customer_id": "cust_001", # Should pass this in request or generate
+            "risk_probability": float(probability),
+            "approved": bool(probability < threshold)
+        }
+    except Exception as e:
+        # Log the error internally here
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {str(e)}")
